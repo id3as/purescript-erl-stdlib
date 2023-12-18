@@ -57,7 +57,7 @@ ensureDir_(Dir) ->
   end.
 
 assertDir_(S) ->
-  fun()
+  fun() ->
     case binary:last(S) of
       $/ -> S;
       _ -> <<S/binary, "/">>
