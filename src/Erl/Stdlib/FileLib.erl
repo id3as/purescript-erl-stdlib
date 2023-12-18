@@ -25,10 +25,21 @@ end.
 
 tmpDir_() ->
   fun() ->
-    case os:getenv("TMPDIR") of
-        false -> "/tmp";
-        Val -> Val
-    end
+    R = case os:type() of
+      {unix, _} ->
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            Val -> Val
+        end;
+      _ ->
+        case os:getenv("TEMP") of
+          false ->
+            %% If there's a better choice, please PR!
+            file:get_cwd();
+          Val -> Val
+        end
+    end,
+    erlang:list_to_binary(R)
   end.
 
 isDir_(Dir) ->
