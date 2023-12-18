@@ -4,6 +4,7 @@
         , tmpDir_/0
         , isDir_/1
         , ensureDir_/1
+        , assertDir_/1
         ]).
 
 mkTemp_() -> fun() ->
@@ -55,3 +56,10 @@ ensureDir_(Dir) ->
     end
   end.
 
+assertDir_(S) ->
+  fun()
+    case binary:last(S) of
+      $/ -> S;
+      _ -> <<S/binary, "/">>
+    end
+  end.
