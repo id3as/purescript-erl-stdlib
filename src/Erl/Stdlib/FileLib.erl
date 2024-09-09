@@ -1,13 +1,21 @@
 -module(erl_stdlib_fileLib@foreign).
 
--export([ mkTemp_/0
+-export([ mkTempFile_/0
+        , mkTempDir_/0
         , tmpDir_/0
         , isDir_/1
         , ensureDir_/1
         , assertDir_/1
         ]).
 
-mkTemp_() -> fun() ->
+mkTempFile_() -> fun() ->
+  case os:type() of
+    {unix, _} ->
+      erlang:list_to_binary(string:chomp(os:cmd("mktemp -t -q pserl.XXXXXXXX")))
+  end
+end.
+
+mkTempDir_() -> fun() ->
   case os:type() of
     {unix, _} ->
       erlang:list_to_binary(string:chomp(os:cmd("mktemp -t -d -q pserl.XXXXXXXX")));
