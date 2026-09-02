@@ -29,6 +29,7 @@ workspace:
         - erl-binary
         - erl-lists
         - erl-maps
+        - erl-modules
         - erl-process
         - erl-tuples
         - erl-untagged-union
@@ -38,13 +39,15 @@ workspace:
         - integers
         - maybe
         - newtype
+        - ordered-collections
         - partial
         - prelude
         - record
+        - strings
         - typelevel-prelude
         - unsafe-coerce
       git: https://github.com/id3as/purescript-erl-kernel.git
-      ref: 526599c1246f24dc337de6f80f1cdecd467b4314
+      ref: 278b2b4c1600b7197de0087b2200c4e14f69437d
 
   package_set:
     url: https://raw.githubusercontent.com/purerl/package-sets/erl-0.15.3-20220629/packages.json
