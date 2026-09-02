@@ -8,17 +8,23 @@
         , ensureDir_/1
         ]).
 
+%% `mktemp -q` is silent on failure and os:cmd gives back "", so the empty
+%% result has to be rejected here: the PureScript side wraps this with
+%% rawFilename, which is the raw channel for bytes that came off a filesystem,
+%% and "" is neither those nor a name. Raising matches what callers got before
+%% Filename existed (badarg out of binary:last/1 on the empty binary), and it
+%% keeps rawFilename honest -- what it receives really is a path mktemp made.
 mkTempFile_() -> fun() ->
   case os:type() of
     {unix, _} ->
-      erlang:list_to_binary(string:chomp(os:cmd("mktemp -t -q pserl.XXXXXXXX")))
+      nonEmptyName(mktemp, os:cmd("mktemp -t -q pserl.XXXXXXXX"))
   end
 end.
 
 mkTempDir_() -> fun() ->
   case os:type() of
     {unix, _} ->
-      erlang:list_to_binary(string:chomp(os:cmd("mktemp -t -d -q pserl.XXXXXXXX")));
+      nonEmptyName(mktemp, os:cmd("mktemp -t -d -q pserl.XXXXXXXX"));
     _ ->
       Temp = case os:getenv("TEMP") of
                 false -> file:get_cwd();
@@ -32,12 +38,21 @@ mkTempDir_() -> fun() ->
   end
 end.
 
+nonEmptyName(What, Raw) ->
+  case string:chomp(Raw) of
+    "" -> erlang:error({What, failed});
+    Name -> erlang:list_to_binary(Name)
+  end.
+
 tmpDir_() ->
   fun() ->
     R = case os:type() of
       {unix, _} ->
+        %% An exported-but-empty TMPDIR is not false, and must not be taken
+        %% as a directory name.
         case os:getenv("TMPDIR") of
             false -> "/tmp";
+            "" -> "/tmp";
             Val -> Val
         end;
       _ ->
