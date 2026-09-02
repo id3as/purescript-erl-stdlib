@@ -4,8 +4,8 @@
         , mkTempDir_/0
         , tmpDir_/0
         , isDir_/1
+        , ensurePath_/1
         , ensureDir_/1
-        , assertDir_/1
         ]).
 
 mkTempFile_() -> fun() ->
@@ -56,16 +56,18 @@ isDir_(Dir) ->
       filelib:is_dir(Dir)
   end.
 
-ensureDir_(Dir) ->
+ensurePath_(Dir) ->
   fun() ->
-    case filelib:ensure_dir(Dir) of
+    case filelib:ensure_path(Dir) of
       ok -> {right, unit};
       {error, Err} -> {left, Err}
     end
   end.
 
-assertDir_(S) ->
-  case binary:last(S) of
-    $/ -> S;
-    _ -> <<S/binary, "/">>
+ensureDir_(File) ->
+  fun() ->
+    case filelib:ensure_dir(File) of
+      ok -> {right, unit};
+      {error, Err} -> {left, Err}
+    end
   end.

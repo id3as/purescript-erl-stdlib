@@ -4,11 +4,15 @@ package:
     - effect
     - prelude
     - erl-kernel
-    - pathy
     - erl-modules
+    - either
+    - maybe
   name: erl-stdlib
   test:
-    dependencies: []
+    dependencies:
+      - assert
+      - erl-test-eunit
+      - free
     main: Test.Main
 workspace:
   backend:
@@ -44,6 +48,3 @@ workspace:
   package_set:
     url: https://raw.githubusercontent.com/purerl/package-sets/erl-0.15.3-20220629/packages.json
     hash: sha256-kLmZv2u5dWVUUaQEwK0b3T1Ghce5a/hG0zlizaYfcXs=
-  build_opts:
-    censor_codes:
-      - ShadowedName
