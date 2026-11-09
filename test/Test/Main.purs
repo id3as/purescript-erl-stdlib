@@ -3,7 +3,7 @@ module Test.Main where
 import Prelude
 
 import Control.Monad.Free (Free)
-import Data.Either (Either(..), isLeft, isRight)
+import Data.Either (Either(..), either, isLeft, isRight)
 import Data.Maybe (Maybe(..), fromMaybe')
 import Effect (Effect)
 import Effect.Class (liftEffect)
@@ -42,7 +42,7 @@ fileLibTests =
       info <- readFileInfo tmp
       assertEqual
         { expected: Right { fileType: Regular, size: 0, perms: 384 }
-        , actual: (\i -> { fileType: i.fileType, size: i.size, perms: i.mode `mod` 512 }) <$> info
+        , actual: either (Left <<< show) (\i -> Right { fileType: i.fileType, size: i.size, perms: i.mode `mod` 512 }) info
         }
       path <- pathOf tmp
       assertTrue $ isUnder base path
@@ -51,7 +51,7 @@ fileLibTests =
       info <- readFileInfo =<< mkTempDir
       assertEqual
         { expected: Right { fileType: Directory, perms: 448 }
-        , actual: (\i -> { fileType: i.fileType, perms: i.mode `mod` 512 }) <$> info
+        , actual: either (Left <<< show) (\i -> Right { fileType: i.fileType, perms: i.mode `mod` 512 }) info
         }
 
     test "successive temp names differ" $ liftEffect do
