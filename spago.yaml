@@ -13,6 +13,7 @@ package:
     dependencies:
       - assert
       - erl-test-eunit
+      - exceptions
       - free
       - strings
     main: Test.Main

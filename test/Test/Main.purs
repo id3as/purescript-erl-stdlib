@@ -5,11 +5,12 @@ import Prelude
 import Control.Monad.Free (Free)
 import Data.Either (Either(..), either, isLeft, isRight)
 import Data.Maybe (Maybe(..), fromMaybe')
+import Data.String as String
 import Effect (Effect)
 import Effect.Class (liftEffect)
-import Erl.Kernel.File (FileType(..), readFileInfo)
+import Effect.Exception (throwException, try)
+import Erl.Kernel.File (FileType(..), delDirR, readFileInfo)
 import Erl.Kernel.Filename (Filename, filename, filenameToString)
-import Data.String as String
 import Erl.Stdlib.FileLib (ensureDir, ensurePath, isDir, mkTempDir, mkTempFile, tmpDir)
 import Erl.Stdlib.UriString as UriString
 import Erl.Test.EUnit (TestF, runTests, suite, test)
@@ -25,69 +26,76 @@ fileLibTests :: Free TestF Unit
 fileLibTests =
   suite "filelib tests" do
     test "mkTempDir makes a directory that is one" $ liftEffect do
-      tmp <- mkTempDir
-      assertTrue =<< isDir tmp
+      withTemp mkTempDir \tmp ->
+        assertTrue =<< isDir tmp
 
     -- Both are made under tmpDir, never relative to the current directory:
     -- BSD mktemp took `-t -q` as a prefix and put them in the cwd.
     test "mkTempDir is made under tmpDir" $ liftEffect do
       base <- pathOf =<< tmpDir
-      tmp <- pathOf =<< mkTempDir
-      assertTrue $ isUnder base tmp
+      withTemp mkTempDir \tmp -> do
+        path <- pathOf tmp
+        assertTrue $ isUnder base path
 
     -- mktemp's modes: 0600 for a file, 0700 for a directory.
     test "mkTempFile makes an empty, owner-only regular file under tmpDir" $ liftEffect do
       base <- pathOf =<< tmpDir
-      tmp <- mkTempFile
-      info <- readFileInfo tmp
-      assertEqual
-        { expected: Right { fileType: Regular, size: 0, perms: 384 }
-        , actual: either (Left <<< show) (\i -> Right { fileType: i.fileType, size: i.size, perms: i.mode `mod` 512 }) info
-        }
-      path <- pathOf tmp
-      assertTrue $ isUnder base path
+      withTemp mkTempFile \tmp -> do
+        info <- readFileInfo tmp
+        assertEqual
+          { expected: Right { fileType: Regular, size: 0, perms: 384 }
+          , actual: either (Left <<< show) (\i -> Right { fileType: i.fileType, size: i.size, perms: i.mode `mod` 512 }) info
+          }
+        path <- pathOf tmp
+        assertTrue $ isUnder base path
 
     test "mkTempDir is owner-only" $ liftEffect do
-      info <- readFileInfo =<< mkTempDir
-      assertEqual
-        { expected: Right { fileType: Directory, perms: 448 }
-        , actual: either (Left <<< show) (\i -> Right { fileType: i.fileType, perms: i.mode `mod` 512 }) info
-        }
+      withTemp mkTempDir \tmp -> do
+        info <- readFileInfo tmp
+        assertEqual
+          { expected: Right { fileType: Directory, perms: 448 }
+          , actual: either (Left <<< show) (\i -> Right { fileType: i.fileType, perms: i.mode `mod` 512 }) info
+          }
 
     test "successive temp names differ" $ liftEffect do
-      a <- pathOf =<< mkTempFile
-      b <- pathOf =<< mkTempFile
-      assertTrue $ a /= b
+      withTemp mkTempFile \a ->
+        withTemp mkTempFile \b -> do
+          pa <- pathOf a
+          pb <- pathOf b
+          assertTrue $ pa /= pb
 
     test "tmpDir is a directory" $ liftEffect do
       t <- tmpDir
       assertTrue =<< isDir t
 
     test "ensurePath creates the directory it is named, and its parents" $ liftEffect do
-      base <- pathOf =<< mkTempDir
-      let target = fn $ base <> "/a/b/c"
-      res <- ensurePath target
-      assertTrue $ isRight res
-      assertTrue =<< isDir (fn $ base <> "/a/b")
-      assertTrue =<< isDir target
+      withTemp mkTempDir \tmp -> do
+        base <- pathOf tmp
+        let target = fn $ base <> "/a/b/c"
+        res <- ensurePath target
+        assertTrue $ isRight res
+        assertTrue =<< isDir (fn $ base <> "/a/b")
+        assertTrue =<< isDir target
 
     -- ensureDir creates the *container* of what it is given, so the trailing
     -- separator is load-bearing: it is how the caller says "this name is a
     -- directory". Passing a pathy Dir used to supply it automatically.
     test "ensureDir without a trailing separator treats the name as a file" $ liftEffect do
-      base <- pathOf =<< mkTempDir
-      let target = fn $ base <> "/x/y/z"
-      res <- ensureDir target
-      assertTrue $ isRight res
-      assertTrue =<< isDir (fn $ base <> "/x/y")
-      madeTarget <- isDir target
-      assertEqual { expected: false, actual: madeTarget }
+      withTemp mkTempDir \tmp -> do
+        base <- pathOf tmp
+        let target = fn $ base <> "/x/y/z"
+        res <- ensureDir target
+        assertTrue $ isRight res
+        assertTrue =<< isDir (fn $ base <> "/x/y")
+        madeTarget <- isDir target
+        assertEqual { expected: false, actual: madeTarget }
 
     test "ensureDir with a trailing separator creates the named directory" $ liftEffect do
-      base <- pathOf =<< mkTempDir
-      res <- ensureDir (fn $ base <> "/p/q/r/")
-      assertTrue $ isRight res
-      assertTrue =<< isDir (fn $ base <> "/p/q/r")
+      withTemp mkTempDir \tmp -> do
+        base <- pathOf tmp
+        res <- ensureDir (fn $ base <> "/p/q/r/")
+        assertTrue $ isRight res
+        assertTrue =<< isDir (fn $ base <> "/p/q/r")
 
 uriStringTests :: Free TestF Unit
 uriStringTests =
@@ -208,6 +216,19 @@ uriStringTests =
           { expected: Right "http://host/b/c"
           , actual: UriString.normalize "HTTP://HOST/a/../b/./c"
           }
+
+-- | Makes a temp file or directory, hands it to the test, and removes it (and
+-- | anything the test put in it) afterwards, failing or not.
+withTemp :: forall a. Effect Filename -> (Filename -> Effect a) -> Effect a
+withTemp make use = do
+  tmp <- make
+  res <- try $ use tmp
+  removed <- delDirR tmp
+  case res of
+    Left err -> throwException err
+    Right a -> do
+      assertTrue $ isRight removed
+      pure a
 
 -- tmpDir may carry a trailing separator ($TMPDIR does on macOS); the names
 -- made under it are joined, so they do not.
