@@ -7,8 +7,10 @@ import Data.Either (Either(..), isLeft, isRight)
 import Data.Maybe (Maybe(..), fromMaybe')
 import Effect (Effect)
 import Effect.Class (liftEffect)
+import Erl.Kernel.File (FileType(..), readFileInfo)
 import Erl.Kernel.Filename (Filename, filename, filenameToString)
-import Erl.Stdlib.FileLib (ensureDir, ensurePath, isDir, mkTempDir, tmpDir)
+import Data.String as String
+import Erl.Stdlib.FileLib (ensureDir, ensurePath, isDir, mkTempDir, mkTempFile, tmpDir)
 import Erl.Stdlib.UriString as UriString
 import Erl.Test.EUnit (TestF, runTests, suite, test)
 import Partial.Unsafe (unsafeCrashWith)
@@ -25,6 +27,37 @@ fileLibTests =
     test "mkTempDir makes a directory that is one" $ liftEffect do
       tmp <- mkTempDir
       assertTrue =<< isDir tmp
+
+    -- Both are made under tmpDir, never relative to the current directory:
+    -- BSD mktemp took `-t -q` as a prefix and put them in the cwd.
+    test "mkTempDir is made under tmpDir" $ liftEffect do
+      base <- pathOf =<< tmpDir
+      tmp <- pathOf =<< mkTempDir
+      assertTrue $ isUnder base tmp
+
+    -- mktemp's modes: 0600 for a file, 0700 for a directory.
+    test "mkTempFile makes an empty, owner-only regular file under tmpDir" $ liftEffect do
+      base <- pathOf =<< tmpDir
+      tmp <- mkTempFile
+      info <- readFileInfo tmp
+      assertEqual
+        { expected: Right { fileType: Regular, size: 0, perms: 384 }
+        , actual: (\i -> { fileType: i.fileType, size: i.size, perms: i.mode `mod` 512 }) <$> info
+        }
+      path <- pathOf tmp
+      assertTrue $ isUnder base path
+
+    test "mkTempDir is owner-only" $ liftEffect do
+      info <- readFileInfo =<< mkTempDir
+      assertEqual
+        { expected: Right { fileType: Directory, perms: 448 }
+        , actual: (\i -> { fileType: i.fileType, perms: i.mode `mod` 512 }) <$> info
+        }
+
+    test "successive temp names differ" $ liftEffect do
+      a <- pathOf =<< mkTempFile
+      b <- pathOf =<< mkTempFile
+      assertTrue $ a /= b
 
     test "tmpDir is a directory" $ liftEffect do
       t <- tmpDir
@@ -175,6 +208,15 @@ uriStringTests =
           { expected: Right "http://host/b/c"
           , actual: UriString.normalize "HTTP://HOST/a/../b/./c"
           }
+
+-- tmpDir may carry a trailing separator ($TMPDIR does on macOS); the names
+-- made under it are joined, so they do not.
+isUnder :: String -> String -> Boolean
+isUnder base path =
+  let
+    dir = fromMaybe' (\_ -> base) (String.stripSuffix (String.Pattern "/") base)
+  in
+    String.take (String.length dir + 1) path == dir <> "/"
 
 fn :: String -> Filename
 fn = unsafeFromJust "must be a valid filename" <<< filename
