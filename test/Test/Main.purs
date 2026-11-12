@@ -13,7 +13,8 @@ import Erl.Stdlib.UriString as UriString
 import Erl.Test.EUnit (TestF, runTests, suite, test)
 import Partial.Unsafe (unsafeCrashWith)
 import Test.Assert (assertEqual, assertTrue)
-import Test.Env (cwdNamesStartingWith, freshDir, isRegularFile, modeBits, normalise, parentDir, removeAll, withEnv)
+import Data.Tuple (Tuple(..))
+import Test.Env (cwdNamesStartingWith, freshDir, isRegularFile, leftInMailboxTrappingExits, modeBits, normalise, parentDir, removeAll, withEnv)
 
 main :: Effect Unit
 main = void $ runTests do
@@ -26,6 +27,18 @@ fileLibTests =
     test "mkTempDir makes a directory that is one" $ liftEffect do
       tmp <- mkTempDir
       assertTrue =<< isDir tmp
+      removeAll tmp
+
+    -- The mktemp port must not be linked to the caller: a gen_server that
+    -- traps exits would otherwise find {'EXIT', Port, normal} in its mailbox
+    -- and, typically, stop.
+    test "a caller that traps exits gets nothing in its mailbox" $ liftEffect do
+      Tuple d dLeft <- leftInMailboxTrappingExits mkTempDir
+      Tuple f fLeft <- leftInMailboxTrappingExits mkTempFile
+      removeAll d
+      removeAll f
+      assertEqual { expected: 0, actual: dLeft }
+      assertEqual { expected: 0, actual: fLeft }
 
     -- BSD mktemp (macOS) reads `-t` as taking the prefix, so the old
     -- `mktemp -t -q pserl.XXXXXXXX` made its file relative to the working
@@ -88,6 +101,7 @@ fileLibTests =
       assertTrue $ isRight res
       assertTrue =<< isDir (fn $ base <> "/a/b")
       assertTrue =<< isDir target
+      removeAll (fn base)
 
     -- ensureDir creates the *container* of what it is given, so the trailing
     -- separator is load-bearing: it is how the caller says "this name is a
@@ -100,12 +114,14 @@ fileLibTests =
       assertTrue =<< isDir (fn $ base <> "/x/y")
       madeTarget <- isDir target
       assertEqual { expected: false, actual: madeTarget }
+      removeAll (fn base)
 
     test "ensureDir with a trailing separator creates the named directory" $ liftEffect do
       base <- pathOf =<< mkTempDir
       res <- ensureDir (fn $ base <> "/p/q/r/")
       assertTrue $ isRight res
       assertTrue =<< isDir (fn $ base <> "/p/q/r")
+      removeAll (fn base)
 
 uriStringTests :: Free TestF Unit
 uriStringTests =

@@ -10,9 +10,12 @@ module Test.Env
   , cwdNamesStartingWith
   , modeBits
   , removeAll
+  , leftInMailboxTrappingExits
   ) where
 
 import Prelude (Unit)
+
+import Data.Tuple (Tuple)
 
 import Data.Maybe (Maybe)
 import Effect (Effect)
@@ -42,3 +45,8 @@ foreign import modeBits :: Filename -> Effect Int
 
 -- | Deletes the file, or the directory and everything in it.
 foreign import removeAll :: Filename -> Effect Unit
+
+-- | Runs the action in a fresh process that traps exits, and gives back its
+-- | result and how many messages were left in that process's mailbox shortly
+-- | afterwards.
+foreign import leftInMailboxTrappingExits :: forall a. Effect a -> Effect (Tuple a Int)

@@ -40,20 +40,31 @@ mkTempUnix(Kind) ->
             file -> ["-q"];
             dir -> ["-q", "-d"]
           end,
-  Port = open_port({spawn_executable, Exe},
-                   [{args, Flags ++ ["--", Template]},
-                    binary, exit_status, use_stdio, hide]),
-  %% `mktemp -q` is silent on failure, so the exit status is what says it
-  %% failed; an empty name is rejected as well, because the PureScript side
-  %% wraps this with rawFilename, and "" is not a name.
-  case collect(Port, <<>>) of
-    {0, Out} ->
+  %% The port is opened by a helper process, not the caller: a port is linked
+  %% to its owner, so a caller that traps exits (a gen_server, typically)
+  %% would otherwise be sent {'EXIT', Port, normal} and might stop on it.
+  {Pid, Ref} = spawn_monitor(fun() ->
+                                 exit({mktemp_result, runMktemp(Exe, Flags ++ ["--", Template])})
+                             end),
+  receive
+    {'DOWN', Ref, process, Pid, {mktemp_result, {0, Out}}} ->
+      %% `mktemp -q` is silent on failure, so the exit status is what says
+      %% it failed; an empty name is rejected as well, because the
+      %% PureScript side wraps this with rawFilename, and "" is not a name.
       case string:trim(Out, trailing, "\n") of
         <<>> -> erlang:error({mktemp, failed});
         Name -> Name
       end;
-    {_, _} -> erlang:error({mktemp, failed})
+    {'DOWN', Ref, process, Pid, {mktemp_result, {_, _}}} ->
+      erlang:error({mktemp, failed});
+    {'DOWN', Ref, process, Pid, Reason} ->
+      erlang:error({mktemp, Reason})
   end.
+
+runMktemp(Exe, Args) ->
+  Port = open_port({spawn_executable, Exe},
+                   [{args, Args}, binary, exit_status, use_stdio, hide]),
+  collect(Port, <<>>).
 
 collect(Port, Acc) ->
   receive

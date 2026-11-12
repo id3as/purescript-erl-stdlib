@@ -3,7 +3,8 @@
 -include_lib("kernel/include/file.hrl").
 
 -export([withEnv/3, freshDir/0, parentDir/1, normalise/1, isRegularFile/1,
-         cwdNamesStartingWith/1, modeBits/1, removeAll/1]).
+         cwdNamesStartingWith/1, modeBits/1, removeAll/1,
+         leftInMailboxTrappingExits/1]).
 
 withEnv(Name, Value, Action) ->
   fun() ->
@@ -65,4 +66,22 @@ removeAll(Name) ->
       false -> ok = file:delete(Name)
     end,
     unit
+  end.
+
+leftInMailboxTrappingExits(Action) ->
+  fun() ->
+    Parent = self(),
+    {Pid, Ref} = spawn_monitor(
+      fun() ->
+        process_flag(trap_exit, true),
+        Result = Action(),
+        %% Give anything asynchronous (a port's EXIT) time to arrive.
+        timer:sleep(200),
+        {message_queue_len, N} = process_info(self(), message_queue_len),
+        Parent ! {self(), {tuple, Result, N}}
+      end),
+    receive
+      {Pid, Reply} -> demonitor(Ref, [flush]), Reply;
+      {'DOWN', Ref, process, Pid, Reason} -> erlang:error({action_failed, Reason})
+    end
   end.
