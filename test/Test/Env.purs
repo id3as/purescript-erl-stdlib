@@ -9,7 +9,10 @@ module Test.Env
   , isRegularFile
   , cwdNamesStartingWith
   , modeBits
+  , removeAll
   ) where
+
+import Prelude (Unit)
 
 import Data.Maybe (Maybe)
 import Effect (Effect)
@@ -36,3 +39,6 @@ foreign import cwdNamesStartingWith :: String -> Effect Int
 
 -- | The permission bits (mode band 8#777) of the named file or directory.
 foreign import modeBits :: Filename -> Effect Int
+
+-- | Deletes the file, or the directory and everything in it.
+foreign import removeAll :: Filename -> Effect Unit

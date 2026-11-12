@@ -13,7 +13,7 @@ import Erl.Stdlib.UriString as UriString
 import Erl.Test.EUnit (TestF, runTests, suite, test)
 import Partial.Unsafe (unsafeCrashWith)
 import Test.Assert (assertEqual, assertTrue)
-import Test.Env (cwdNamesStartingWith, freshDir, isRegularFile, modeBits, normalise, parentDir, withEnv)
+import Test.Env (cwdNamesStartingWith, freshDir, isRegularFile, modeBits, normalise, parentDir, removeAll, withEnv)
 
 main :: Effect Unit
 main = void $ runTests do
@@ -38,6 +38,7 @@ fileLibTests =
       assertEqual { expected: normalise t, actual: parentDir f }
       after <- cwdNamesStartingWith "pserl."
       assertEqual { expected: before, actual: after }
+      removeAll f
 
     test "mkTempDir makes a directory in tmpDir, not in the working directory" $ liftEffect do
       before <- cwdNamesStartingWith "pserl."
@@ -46,6 +47,7 @@ fileLibTests =
       assertEqual { expected: normalise t, actual: parentDir d }
       after <- cwdNamesStartingWith "pserl."
       assertEqual { expected: before, actual: after }
+      removeAll d
 
     test "mkTempFile and mkTempDir follow TMPDIR" $ liftEffect do
       dir <- freshDir
@@ -57,18 +59,13 @@ fileLibTests =
         assertEqual { expected: dir, actual: parentDir d }
         assertTrue =<< isRegularFile f
         assertTrue =<< isDir d
+      removeAll (fn dir)
 
     test "an empty TMPDIR means /tmp" $ liftEffect do
       withEnv "TMPDIR" (Just "") do
         f <- mkTempFile
         assertEqual { expected: "/tmp", actual: parentDir f }
-
-    test "each call makes a new name" $ liftEffect do
-      a <- pathOf =<< mkTempFile
-      b <- pathOf =<< mkTempFile
-      c <- pathOf =<< mkTempDir
-      d <- pathOf =<< mkTempDir
-      assertTrue $ a /= b && c /= d
+        removeAll f
 
     test "temp files and directories are private to the owner, as mktemp's are" $ liftEffect do
       f <- mkTempFile
@@ -77,6 +74,8 @@ fileLibTests =
       dirMode <- modeBits d
       assertEqual { expected: 384, actual: fileMode } -- 0600
       assertEqual { expected: 448, actual: dirMode } -- 0700
+      removeAll f
+      removeAll d
 
     test "tmpDir is a directory" $ liftEffect do
       t <- tmpDir

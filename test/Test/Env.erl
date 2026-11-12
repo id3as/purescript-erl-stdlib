@@ -3,7 +3,7 @@
 -include_lib("kernel/include/file.hrl").
 
 -export([withEnv/3, freshDir/0, parentDir/1, normalise/1, isRegularFile/1,
-         cwdNamesStartingWith/1, modeBits/1]).
+         cwdNamesStartingWith/1, modeBits/1, removeAll/1]).
 
 withEnv(Name, Value, Action) ->
   fun() ->
@@ -56,4 +56,13 @@ modeBits(Name) ->
   fun() ->
     {ok, #file_info{mode = Mode}} = file:read_file_info(Name),
     Mode band 8#777
+  end.
+
+removeAll(Name) ->
+  fun() ->
+    case filelib:is_dir(Name) of
+      true -> ok = file:del_dir_r(Name);
+      false -> ok = file:delete(Name)
+    end,
+    unit
   end.
