@@ -8,62 +8,69 @@
         , ensureDir_/1
         ]).
 
-%% `mktemp -q` is silent on failure and os:cmd gives back "", so the empty
-%% result has to be rejected here: the PureScript side wraps this with
-%% rawFilename, which is the raw channel for bytes that came off a filesystem,
-%% and "" is neither those nor a name. Raising matches what callers got before
-%% Filename existed (badarg out of binary:last/1 on the empty binary), and it
-%% keeps rawFilename honest -- what it receives really is a path mktemp made.
-mkTempFile_() -> fun() ->
-  case os:type() of
-    {unix, _} ->
-      nonEmptyName(mktemp, os:cmd("mktemp -t -q pserl.XXXXXXXX"))
-  end
-end.
+%% Temp files and directories are made here, in Erlang, under tmpDir_ -- not by
+%% shelling out to mktemp. `mktemp -t` is not portable: GNU takes -t as a flag
+%% meaning "under $TMPDIR", BSD (macOS) takes the next word as a prefix, so the
+%% old `mktemp -t -q pserl.XXXXXXXX` made its file relative to the working
+%% directory there, which for a release is the release root (id3as/norsk#969).
+%% Like mktemp, the name is pserl. and eight random alphanumerics, it is made
+%% exclusively (an existing name is retried, never reused), and it is private
+%% to the owner: 0600 for a file, 0700 for a directory.
+mkTempFile_() -> fun() -> mkTemp(fun makeFile/1) end.
 
-mkTempDir_() -> fun() ->
-  case os:type() of
-    {unix, _} ->
-      nonEmptyName(mktemp, os:cmd("mktemp -t -d -q pserl.XXXXXXXX"));
-    _ ->
-      Temp = case os:getenv("TEMP") of
-                false -> file:get_cwd();
-                Val -> Val
-             end,
+mkTempDir_() -> fun() -> mkTemp(fun makeDir/1) end.
 
-      Rand = integer_to_list(base64:encode(crypto:strong_rand_bytes(16))),
-      Path = filename:join(Temp, Rand),
-      ok = filelib:ensure_dir(Path),
-      erlang:list_to_binary(Path)
-  end
-end.
+mkTemp(Make) -> mkTemp(Make, 100).
 
-nonEmptyName(What, Raw) ->
-  case string:chomp(Raw) of
-    "" -> erlang:error({What, failed});
-    Name -> erlang:list_to_binary(Name)
+mkTemp(_Make, 0) ->
+  erlang:error({mktemp, failed});
+mkTemp(Make, Tries) ->
+  Path = filename:join(tmpDirName(), "pserl." ++ randomSuffix(8)),
+  case Make(Path) of
+    ok -> unicode:characters_to_binary(Path);
+    {error, eexist} -> mkTemp(Make, Tries - 1);
+    {error, Reason} -> erlang:error({mktemp, Reason})
   end.
 
+makeFile(Path) ->
+  case file:open(Path, [write, exclusive, raw]) of
+    {ok, Fd} ->
+      ok = file:close(Fd),
+      file:change_mode(Path, 8#600);
+    Error -> Error
+  end.
+
+makeDir(Path) ->
+  case file:make_dir(Path) of
+    ok -> file:change_mode(Path, 8#700);
+    Error -> Error
+  end.
+
+randomSuffix(N) ->
+  Chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+  [lists:nth(rand:uniform(length(Chars)), Chars) || _ <- lists:seq(1, N)].
+
 tmpDir_() ->
-  fun() ->
-    R = case os:type() of
-      {unix, _} ->
-        %% An exported-but-empty TMPDIR is not false, and must not be taken
-        %% as a directory name.
-        case os:getenv("TMPDIR") of
-            false -> "/tmp";
-            "" -> "/tmp";
-            Val -> Val
-        end;
-      _ ->
-        case os:getenv("TEMP") of
-          false ->
-            %% If there's a better choice, please PR!
-            file:get_cwd();
-          Val -> Val
-        end
-    end,
-    erlang:list_to_binary(R)
+  fun() -> unicode:characters_to_binary(tmpDirName()) end.
+
+tmpDirName() ->
+  case os:type() of
+    {unix, _} ->
+      %% An exported-but-empty TMPDIR is not false, and must not be taken
+      %% as a directory name.
+      case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        "" -> "/tmp";
+        Val -> Val
+      end;
+    _ ->
+      case os:getenv("TEMP") of
+        false ->
+          %% If there's a better choice, please PR!
+          {ok, Cwd} = file:get_cwd(),
+          Cwd;
+        Val -> Val
+      end
   end.
 
 isDir_(Dir) ->

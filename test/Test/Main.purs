@@ -8,11 +8,12 @@ import Data.Maybe (Maybe(..), fromMaybe')
 import Effect (Effect)
 import Effect.Class (liftEffect)
 import Erl.Kernel.Filename (Filename, filename, filenameToString)
-import Erl.Stdlib.FileLib (ensureDir, ensurePath, isDir, mkTempDir, tmpDir)
+import Erl.Stdlib.FileLib (ensureDir, ensurePath, isDir, mkTempDir, mkTempFile, tmpDir)
 import Erl.Stdlib.UriString as UriString
 import Erl.Test.EUnit (TestF, runTests, suite, test)
 import Partial.Unsafe (unsafeCrashWith)
 import Test.Assert (assertEqual, assertTrue)
+import Test.Env (cwdNamesStartingWith, freshDir, isRegularFile, modeBits, normalise, parentDir, withEnv)
 
 main :: Effect Unit
 main = void $ runTests do
@@ -25,6 +26,57 @@ fileLibTests =
     test "mkTempDir makes a directory that is one" $ liftEffect do
       tmp <- mkTempDir
       assertTrue =<< isDir tmp
+
+    -- BSD mktemp (macOS) reads `-t` as taking the prefix, so the old
+    -- `mktemp -t -q pserl.XXXXXXXX` made its file relative to the working
+    -- directory -- for a release, the release root.
+    test "mkTempFile makes a file in tmpDir, not in the working directory" $ liftEffect do
+      before <- cwdNamesStartingWith "pserl."
+      t <- pathOf =<< tmpDir
+      f <- mkTempFile
+      assertTrue =<< isRegularFile f
+      assertEqual { expected: normalise t, actual: parentDir f }
+      after <- cwdNamesStartingWith "pserl."
+      assertEqual { expected: before, actual: after }
+
+    test "mkTempDir makes a directory in tmpDir, not in the working directory" $ liftEffect do
+      before <- cwdNamesStartingWith "pserl."
+      t <- pathOf =<< tmpDir
+      d <- mkTempDir
+      assertEqual { expected: normalise t, actual: parentDir d }
+      after <- cwdNamesStartingWith "pserl."
+      assertEqual { expected: before, actual: after }
+
+    test "mkTempFile and mkTempDir follow TMPDIR" $ liftEffect do
+      dir <- freshDir
+      -- macOS's own TMPDIR ends in a separator; the result must not care.
+      withEnv "TMPDIR" (Just $ dir <> "/") do
+        f <- mkTempFile
+        d <- mkTempDir
+        assertEqual { expected: dir, actual: parentDir f }
+        assertEqual { expected: dir, actual: parentDir d }
+        assertTrue =<< isRegularFile f
+        assertTrue =<< isDir d
+
+    test "an empty TMPDIR means /tmp" $ liftEffect do
+      withEnv "TMPDIR" (Just "") do
+        f <- mkTempFile
+        assertEqual { expected: "/tmp", actual: parentDir f }
+
+    test "each call makes a new name" $ liftEffect do
+      a <- pathOf =<< mkTempFile
+      b <- pathOf =<< mkTempFile
+      c <- pathOf =<< mkTempDir
+      d <- pathOf =<< mkTempDir
+      assertTrue $ a /= b && c /= d
+
+    test "temp files and directories are private to the owner, as mktemp's are" $ liftEffect do
+      f <- mkTempFile
+      d <- mkTempDir
+      fileMode <- modeBits f
+      dirMode <- modeBits d
+      assertEqual { expected: 384, actual: fileMode } -- 0600
+      assertEqual { expected: 448, actual: dirMode } -- 0700
 
     test "tmpDir is a directory" $ liftEffect do
       t <- tmpDir
