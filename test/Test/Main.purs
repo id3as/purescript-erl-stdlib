@@ -8,11 +8,13 @@ import Data.Maybe (Maybe(..), fromMaybe')
 import Effect (Effect)
 import Effect.Class (liftEffect)
 import Erl.Kernel.Filename (Filename, filename, filenameToString)
-import Erl.Stdlib.FileLib (ensureDir, ensurePath, isDir, mkTempDir, tmpDir)
+import Erl.Stdlib.FileLib (ensureDir, ensurePath, isDir, mkTempDir, mkTempFile, tmpDir)
 import Erl.Stdlib.UriString as UriString
 import Erl.Test.EUnit (TestF, runTests, suite, test)
 import Partial.Unsafe (unsafeCrashWith)
 import Test.Assert (assertEqual, assertTrue)
+import Data.Tuple (Tuple(..))
+import Test.Env (cwdNamesStartingWith, freshDir, isRegularFile, leftInMailboxTrappingExits, modeBits, normalise, parentDir, removeAll, withEnv)
 
 main :: Effect Unit
 main = void $ runTests do
@@ -25,6 +27,68 @@ fileLibTests =
     test "mkTempDir makes a directory that is one" $ liftEffect do
       tmp <- mkTempDir
       assertTrue =<< isDir tmp
+      removeAll tmp
+
+    -- The mktemp port must not be linked to the caller: a gen_server that
+    -- traps exits would otherwise find {'EXIT', Port, normal} in its mailbox
+    -- and, typically, stop.
+    test "a caller that traps exits gets nothing in its mailbox" $ liftEffect do
+      Tuple d dLeft <- leftInMailboxTrappingExits mkTempDir
+      Tuple f fLeft <- leftInMailboxTrappingExits mkTempFile
+      removeAll d
+      removeAll f
+      assertEqual { expected: 0, actual: dLeft }
+      assertEqual { expected: 0, actual: fLeft }
+
+    -- BSD mktemp (macOS) reads `-t` as taking the prefix, so the old
+    -- `mktemp -t -q pserl.XXXXXXXX` made its file relative to the working
+    -- directory -- for a release, the release root.
+    test "mkTempFile makes a file in tmpDir, not in the working directory" $ liftEffect do
+      before <- cwdNamesStartingWith "pserl."
+      t <- pathOf =<< tmpDir
+      f <- mkTempFile
+      assertTrue =<< isRegularFile f
+      assertEqual { expected: normalise t, actual: parentDir f }
+      after <- cwdNamesStartingWith "pserl."
+      assertEqual { expected: before, actual: after }
+      removeAll f
+
+    test "mkTempDir makes a directory in tmpDir, not in the working directory" $ liftEffect do
+      before <- cwdNamesStartingWith "pserl."
+      t <- pathOf =<< tmpDir
+      d <- mkTempDir
+      assertEqual { expected: normalise t, actual: parentDir d }
+      after <- cwdNamesStartingWith "pserl."
+      assertEqual { expected: before, actual: after }
+      removeAll d
+
+    test "mkTempFile and mkTempDir follow TMPDIR" $ liftEffect do
+      dir <- freshDir
+      -- macOS's own TMPDIR ends in a separator; the result must not care.
+      withEnv "TMPDIR" (Just $ dir <> "/") do
+        f <- mkTempFile
+        d <- mkTempDir
+        assertEqual { expected: dir, actual: parentDir f }
+        assertEqual { expected: dir, actual: parentDir d }
+        assertTrue =<< isRegularFile f
+        assertTrue =<< isDir d
+      removeAll (fn dir)
+
+    test "an empty TMPDIR means /tmp" $ liftEffect do
+      withEnv "TMPDIR" (Just "") do
+        f <- mkTempFile
+        assertEqual { expected: "/tmp", actual: parentDir f }
+        removeAll f
+
+    test "temp files and directories are private to the owner, as mktemp's are" $ liftEffect do
+      f <- mkTempFile
+      d <- mkTempDir
+      fileMode <- modeBits f
+      dirMode <- modeBits d
+      assertEqual { expected: 384, actual: fileMode } -- 0600
+      assertEqual { expected: 448, actual: dirMode } -- 0700
+      removeAll f
+      removeAll d
 
     test "tmpDir is a directory" $ liftEffect do
       t <- tmpDir
@@ -37,6 +101,7 @@ fileLibTests =
       assertTrue $ isRight res
       assertTrue =<< isDir (fn $ base <> "/a/b")
       assertTrue =<< isDir target
+      removeAll (fn base)
 
     -- ensureDir creates the *container* of what it is given, so the trailing
     -- separator is load-bearing: it is how the caller says "this name is a
@@ -49,12 +114,14 @@ fileLibTests =
       assertTrue =<< isDir (fn $ base <> "/x/y")
       madeTarget <- isDir target
       assertEqual { expected: false, actual: madeTarget }
+      removeAll (fn base)
 
     test "ensureDir with a trailing separator creates the named directory" $ liftEffect do
       base <- pathOf =<< mkTempDir
       res <- ensureDir (fn $ base <> "/p/q/r/")
       assertTrue $ isRight res
       assertTrue =<< isDir (fn $ base <> "/p/q/r")
+      removeAll (fn base)
 
 uriStringTests :: Free TestF Unit
 uriStringTests =
